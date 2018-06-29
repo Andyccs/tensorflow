@@ -22,16 +22,13 @@ limitations under the License.
 #include "tensorflow/stream_executor/platform/port.h"
 #include <vector>
 
-#include "cuda/cuda_config.h"
 #include "tensorflow/stream_executor/lib/status.h"
 #include "tensorflow/stream_executor/lib/statusor.h"
 #include "tensorflow/stream_executor/lib/stringpiece.h"
 #include "tensorflow/stream_executor/platform.h"
 #include "tensorflow/stream_executor/platform/mutex.h"
-#include "tensorflow/stream_executor/platform/port.h"
 
-namespace perftools {
-namespace gputools {
+namespace stream_executor {
 namespace internal {
 
 // Permits StreamExecutor code to dynamically load a pre-determined set of
@@ -116,7 +113,6 @@ class CachedDsoLoader {
 };
 
 }  // namespace internal
-}  // namespace gputools
-}  // namespace perftools
+}  // namespace stream_executor
 
 #endif  // TENSORFLOW_STREAM_EXECUTOR_DSO_LOADER_H_

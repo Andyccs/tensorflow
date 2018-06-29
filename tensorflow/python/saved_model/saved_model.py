@@ -22,20 +22,15 @@ from __future__ import print_function
 
 # pylint: disable=unused-import
 from tensorflow.python.saved_model import builder
+from tensorflow.python.saved_model import constants
 from tensorflow.python.saved_model import loader
+from tensorflow.python.saved_model import main_op
 from tensorflow.python.saved_model import signature_constants
 from tensorflow.python.saved_model import signature_def_utils
 from tensorflow.python.saved_model import tag_constants
+from tensorflow.python.saved_model import utils
 # pylint: enable=unused-import
+# pylint: disable=wildcard-import
+from tensorflow.python.saved_model.simple_save import *
+# pylint: enable=wildcard-import
 
-from tensorflow.python.util.all_util import remove_undocumented
-
-
-_allowed_symbols = [
-    "builder",
-    "loader",
-    "signature_constants",
-    "signature_def_utils",
-    "tag_constants",
-]
-remove_undocumented(__name__, _allowed_symbols)

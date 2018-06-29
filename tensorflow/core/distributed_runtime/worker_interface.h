@@ -40,6 +40,14 @@ class WorkerInterface {
                               GetStatusResponse* response,
                               StatusCallback done) = 0;
 
+  virtual void CreateWorkerSessionAsync(
+      const CreateWorkerSessionRequest* request,
+      CreateWorkerSessionResponse* response, StatusCallback done) = 0;
+
+  virtual void DeleteWorkerSessionAsync(
+      CallOptions* opts, const DeleteWorkerSessionRequest* request,
+      DeleteWorkerSessionResponse* response, StatusCallback done) = 0;
+
   virtual void RegisterGraphAsync(const RegisterGraphRequest* request,
                                   RegisterGraphResponse* response,
                                   StatusCallback done) = 0;
@@ -49,7 +57,7 @@ class WorkerInterface {
                                     StatusCallback done) = 0;
 
   virtual void RunGraphAsync(CallOptions* opts, RunGraphRequestWrapper* request,
-                             RunGraphResponse* repsonse,
+                             MutableRunGraphResponseWrapper* repsonse,
                              StatusCallback done) = 0;
 
   virtual void RunGraphAsync(CallOptions* opts, const RunGraphRequest* request,
@@ -57,15 +65,32 @@ class WorkerInterface {
     // TODO(mrry): Convert this to std::bind/std::move if the overhead
     // of std::function copying becomes too much.
     RunGraphRequestWrapper* wrapped_request = new ProtoRunGraphRequest(request);
-    RunGraphAsync(opts, wrapped_request, response,
-                  [wrapped_request, done](const Status& s) {
+    MutableRunGraphResponseWrapper* wrapped_response =
+        new NonOwnedProtoRunGraphResponse(response);
+    RunGraphAsync(opts, wrapped_request, wrapped_response,
+                  [wrapped_request, wrapped_response, done](const Status& s) {
                     done(s);
                     delete wrapped_request;
+                    delete wrapped_response;
                   });
   }
 
+  // Returns a request object for use in calls to
+  // `RunGraphAsync()`. Ownership is transferred to the caller.
+  //
+  // The message returned from this method must only be used in a
+  // `RunGraph()` call on the same `WorkerInterface` instance.
   virtual MutableRunGraphRequestWrapper* CreateRunGraphRequest() {
     return new MutableProtoRunGraphRequest;
+  }
+
+  // Returns a response object for use in calls to
+  // `RunGraphAsync()`. Ownership is transferred to the caller.
+  //
+  // The message returned from this method must only be used in a
+  // `RunGraph()` call on the same `WorkerInterface` instance.
+  virtual MutableRunGraphResponseWrapper* CreateRunGraphResponse() {
+    return new OwnedProtoRunGraphResponse;
   }
 
   virtual void CleanupGraphAsync(const CleanupGraphRequest* request,
@@ -87,9 +112,37 @@ class WorkerInterface {
   virtual void TracingAsync(const TracingRequest* request,
                             TracingResponse* response, StatusCallback done) = 0;
 
+  virtual void RecvBufAsync(CallOptions* opts, const RecvBufRequest* request,
+                            RecvBufResponse* response, StatusCallback done) = 0;
+
+  virtual void CompleteGroupAsync(CallOptions* opts,
+                                  const CompleteGroupRequest* request,
+                                  CompleteGroupResponse* response,
+                                  StatusCallback done) = 0;
+
+  virtual void CompleteInstanceAsync(CallOptions* ops,
+                                     const CompleteInstanceRequest* request,
+                                     CompleteInstanceResponse* response,
+                                     StatusCallback done) = 0;
+
+  virtual void GetStepSequenceAsync(const GetStepSequenceRequest* request,
+                                    GetStepSequenceResponse* response,
+                                    StatusCallback done) = 0;
+
   Status GetStatus(const GetStatusRequest* request,
                    GetStatusResponse* response) {
     return CallAndWait(&ME::GetStatusAsync, request, response);
+  }
+
+  Status CreateWorkerSession(const CreateWorkerSessionRequest* request,
+                             CreateWorkerSessionResponse* response) {
+    return CallAndWait(&ME::CreateWorkerSessionAsync, request, response);
+  }
+
+  Status DeleteWorkerSession(const DeleteWorkerSessionRequest* request,
+                             DeleteWorkerSessionResponse* response) {
+    return CallAndWaitWithOptions(&ME::DeleteWorkerSessionAsync, request,
+                                  response);
   }
 
   Status RegisterGraph(const RegisterGraphRequest* request,
@@ -120,11 +173,24 @@ class WorkerInterface {
     return CallAndWait(&ME::TracingAsync, request, response);
   }
 
+  Status GetStepSequence(const GetStepSequenceRequest* request,
+                         GetStepSequenceResponse* response) {
+    return CallAndWait(&ME::GetStepSequenceAsync, request, response);
+  }
+
  protected:
   // Instances of WorkerInterface must be deleted by a call to
   // WorkerCacheInterface::ReleaseWorker().
   virtual ~WorkerInterface() {}
   friend class WorkerCacheInterface;
+
+  // NOTE: This should only be called by implementations of this
+  // interface whose CreateRunGraphResponse() method returns a
+  // proto-based wrappers for the RunGraphResponse message.
+  RunGraphResponse* get_proto_from_wrapper(
+      MutableRunGraphResponseWrapper* wrapper) {
+    return wrapper->get_proto();
+  }
 
  private:
   typedef WorkerInterface ME;
@@ -134,6 +200,19 @@ class WorkerInterface {
     Status ret;
     Notification n;
     (this->*func)(req, resp, [&ret, &n](const Status& s) {
+      ret = s;
+      n.Notify();
+    });
+    n.WaitForNotification();
+    return ret;
+  }
+
+  template <typename Method, typename Req, typename Resp>
+  Status CallAndWaitWithOptions(Method func, const Req* req, Resp* resp) {
+    CallOptions call_opts;
+    Status ret;
+    Notification n;
+    (this->*func)(&call_opts, req, resp, [&ret, &n](const Status& s) {
       ret = s;
       n.Notify();
     });

@@ -24,39 +24,30 @@ limitations under the License.
 
 namespace xla {
 
-AsyncExecution::AsyncExecution(
-    Backend* backend,
-    std::vector<std::unique_ptr<perftools::gputools::Stream>> streams,
-    const ExecutionProfile& profile, GlobalDataHandle result)
+AsyncExecution::AsyncExecution(Backend* backend,
+                               std::vector<Backend::StreamPtr> streams,
+                               const ExecutionProfile& profile,
+                               GlobalDataHandle result)
     : backend_(CHECK_NOTNULL(backend)),
       streams_(std::move(streams)),
       profile_(profile),
-      result_(result) {
+      result_(std::move(result)) {
   for (const auto& stream : streams_) {
     CHECK(stream != nullptr);
   }
 }
 
-AsyncExecution::~AsyncExecution() {
+Status AsyncExecution::BlockUntilDone() const {
   for (auto& stream : streams_) {
-    backend_->ReleaseStream(std::move(stream));
+    TF_RETURN_IF_ERROR(stream->BlockHostUntilDone());
   }
-}
-
-tensorflow::Status AsyncExecution::BlockUntilDone() const {
-  for (auto& stream : streams_) {
-    if (!stream->BlockHostUntilDone()) {
-      return InternalError("failed to block until done");
-    }
-  }
-  return tensorflow::Status::OK();
+  return Status::OK();
 }
 
 ExecutionTracker::ExecutionTracker() : next_handle_(1) {}
 
 ExecutionHandle ExecutionTracker::Register(
-    Backend* backend,
-    std::vector<std::unique_ptr<perftools::gputools::Stream>> streams,
+    Backend* backend, std::vector<Backend::StreamPtr> streams,
     const ExecutionProfile& profile, GlobalDataHandle result) {
   tensorflow::mutex_lock lock(execution_mutex_);
   int64 handle = next_handle_++;
@@ -70,7 +61,7 @@ ExecutionHandle ExecutionTracker::Register(
   return execution_handle;
 }
 
-tensorflow::Status ExecutionTracker::Unregister(const ExecutionHandle& handle) {
+Status ExecutionTracker::Unregister(const ExecutionHandle& handle) {
   tensorflow::mutex_lock lock(execution_mutex_);
   auto it = handle_to_execution_.find(handle.handle());
   if (it == handle_to_execution_.end()) {
@@ -78,7 +69,7 @@ tensorflow::Status ExecutionTracker::Unregister(const ExecutionHandle& handle) {
                     handle.handle());
   }
   handle_to_execution_.erase(handle.handle());
-  return tensorflow::Status::OK();
+  return Status::OK();
 }
 
 StatusOr<const AsyncExecution*> ExecutionTracker::Resolve(

@@ -33,9 +33,9 @@ namespace gpu {
 // issue (b/31336476).
 class TupleThunk : public Thunk {
  public:
-  TupleThunk(tensorflow::gtl::ArraySlice<BufferAllocation::Index>
+  TupleThunk(tensorflow::gtl::ArraySlice<BufferAllocation::Slice>
                  tuple_element_buffers,
-             BufferAllocation::Index dest_buffer,
+             const BufferAllocation::Slice& dest_buffer,
              const HloInstruction* hlo_instruction)
       : Thunk(Kind::kTuple, hlo_instruction),
         tuple_element_buffers_(tuple_element_buffers.begin(),
@@ -45,13 +45,12 @@ class TupleThunk : public Thunk {
   TupleThunk(const TupleThunk&) = delete;
   TupleThunk& operator=(const TupleThunk&) = delete;
 
-  tensorflow::Status ExecuteOnStream(
-      const BufferAllocations& buffer_allocations,
-      perftools::gputools::Stream* stream) override;
+  Status ExecuteOnStream(const BufferAllocations& buffer_allocations,
+                         se::Stream* stream) override;
 
  private:
-  std::vector<BufferAllocation::Index> tuple_element_buffers_;
-  const BufferAllocation::Index dest_buffer_;
+  const std::vector<BufferAllocation::Slice> tuple_element_buffers_;
+  const BufferAllocation::Slice dest_buffer_;
 };
 
 }  // namespace gpu

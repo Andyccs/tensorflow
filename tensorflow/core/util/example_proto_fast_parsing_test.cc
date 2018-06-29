@@ -12,14 +12,17 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
+
 #include "tensorflow/core/util/example_proto_fast_parsing.h"
 
 #include "tensorflow/core/example/example.pb.h"
+#include "tensorflow/core/example/feature.pb.h"
 #include "tensorflow/core/lib/random/philox_random.h"
 #include "tensorflow/core/lib/random/simple_philox.h"
 #include "tensorflow/core/platform/protobuf.h"
 #include "tensorflow/core/platform/test.h"
 #include "tensorflow/core/platform/test_benchmark.h"
+#include "tensorflow/core/util/example_proto_fast_parsing_test.pb.h"
 
 namespace tensorflow {
 namespace example {
@@ -42,7 +45,8 @@ string SerializedToReadable(string serialized) {
   return result;
 }
 
-string Serialize(const Example& example) {
+template <class T>
+string Serialize(const T& example) {
   string serialized;
   example.SerializeToString(&serialized);
   return serialized;
@@ -54,6 +58,7 @@ void TestCorrectness(const string& serialized) {
   Example example;
   Example fast_example;
   EXPECT_TRUE(example.ParseFromString(serialized));
+  example.DiscardUnknownFields();
   EXPECT_TRUE(TestFastParse(serialized, &fast_example));
   EXPECT_EQ(example.DebugString(), fast_example.DebugString());
   if (example.DebugString() != fast_example.DebugString()) {
@@ -66,6 +71,54 @@ void TestCorrectness(const string& serialized) {
 //   Example example;
 //   TestCorrectness(example);
 // }
+
+TEST(FastParse, IgnoresPrecedingUnknownTopLevelFields) {
+  ExampleWithExtras example;
+  (*example.mutable_features()->mutable_feature())["age"]
+      .mutable_int64_list()
+      ->add_value(13);
+  example.set_extra1("some_str");
+  example.set_extra2(123);
+  example.set_extra3(234);
+  example.set_extra4(345);
+  example.set_extra5(4.56);
+  example.add_extra6(5.67);
+  example.add_extra6(6.78);
+  (*example.mutable_extra7()->mutable_feature())["extra7"]
+      .mutable_int64_list()
+      ->add_value(1337);
+
+  Example context;
+  (*context.mutable_features()->mutable_feature())["zipcode"]
+      .mutable_int64_list()
+      ->add_value(94043);
+
+  TestCorrectness(strings::StrCat(Serialize(example), Serialize(context)));
+}
+
+TEST(FastParse, IgnoresTrailingUnknownTopLevelFields) {
+  Example example;
+  (*example.mutable_features()->mutable_feature())["age"]
+      .mutable_int64_list()
+      ->add_value(13);
+
+  ExampleWithExtras context;
+  (*context.mutable_features()->mutable_feature())["zipcode"]
+      .mutable_int64_list()
+      ->add_value(94043);
+  context.set_extra1("some_str");
+  context.set_extra2(123);
+  context.set_extra3(234);
+  context.set_extra4(345);
+  context.set_extra5(4.56);
+  context.add_extra6(5.67);
+  context.add_extra6(6.78);
+  (*context.mutable_extra7()->mutable_feature())["extra7"]
+      .mutable_int64_list()
+      ->add_value(1337);
+
+  TestCorrectness(strings::StrCat(Serialize(example), Serialize(context)));
+}
 
 TEST(FastParse, SingleInt64WithContext) {
   Example example;
@@ -261,7 +314,7 @@ void Fuzz(random::SimplePhilox* rng) {
           break;
         }
         default: {
-          QCHECK(false);
+          LOG(QFATAL);
           break;
         }
       }
@@ -284,34 +337,6 @@ TEST(FastParse, FuzzTest) {
   }
 }
 
-string MakeSerializedExample() {
-  Example example;
-  const int kFeatureNameLength = 10;
-  const int kFeatureValueLength = 20;
-  const int kBytesFeatureCount = 200;
-  const int kFloatFeatureCount = 200;
-  const int kInt64FeatureCount = 200;
-  auto& fmap = *example.mutable_features()->mutable_feature();
-  for (int i = 0; i < kBytesFeatureCount; ++i) {
-    fmap[strings::StrCat(string('b', kFeatureNameLength), i)]
-        .mutable_bytes_list()
-        ->add_value(string('v', kFeatureValueLength));
-  }
-  for (int i = 0; i < kFloatFeatureCount; ++i) {
-    fmap[strings::StrCat(string('f', kFeatureNameLength), i)]
-        .mutable_float_list()
-        ->add_value(123123123.123);
-  }
-  for (int i = 0; i < kInt64FeatureCount; ++i) {
-    fmap[strings::StrCat(string('i', kFeatureNameLength), i)]
-        .mutable_int64_list()
-        ->add_value(10 * i);
-  }
-  string serialized;
-  example.SerializeToString(&serialized);
-  return serialized;
-}
-
 TEST(TestFastParseExample, Empty) {
   Result result;
   FastParseExampleConfig config;
@@ -322,6 +347,5 @@ TEST(TestFastParseExample, Empty) {
 }
 
 }  // namespace
-
 }  // namespace example
 }  // namespace tensorflow

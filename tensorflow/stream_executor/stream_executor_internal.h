@@ -45,30 +45,11 @@ limitations under the License.
 #include "tensorflow/stream_executor/trace_listener.h"
 #include "tensorflow/stream_executor/lib/inlined_vector.h"
 
-namespace perftools {
-namespace gputools {
+namespace stream_executor {
 
-class KernelBase;
 class Stream;
 class Timer;
 
-namespace blas {
-class BlasSupport;
-}  // namespace blas
-
-namespace fft {
-class Support;
-}  // namespace fft
-
-namespace rng {
-class RngSupport;
-}  // namespace rng
-
-}  // namespace gputools
-}  // namespace perftools
-
-namespace perftools {
-namespace gputools {
 namespace internal {
 
 // Platform-dependent interface class for the generic Events interface, in
@@ -187,10 +168,21 @@ class StreamExecutorInterface {
                       const KernelArgsArrayBase &args) {
     return false;
   }
+  // Releases any state associated with the kernel.
+  virtual void UnloadKernel(const KernelBase *kernel) {}
   virtual void *Allocate(uint64 size) = 0;
   virtual void *AllocateSubBuffer(DeviceMemoryBase *parent, uint64 offset,
                                   uint64 size) = 0;
   virtual void Deallocate(DeviceMemoryBase *mem) = 0;
+  // Allocates unified memory space of the given size, if supported.
+  // See
+  // https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#um-unified-memory-programming-hd
+  // for more details on unified memory.
+  virtual void *UnifiedMemoryAllocate(uint64 size) { return nullptr; }
+
+  // Deallocates unified memory space previously allocated with
+  // UnifiedMemoryAllocate.
+  virtual void UnifiedMemoryDeallocate(void *mem) {}
   virtual void *HostMemoryAllocate(uint64 size) = 0;
   virtual void HostMemoryDeallocate(void *mem) = 0;
   virtual bool HostMemoryRegister(void *mem, uint64 size) = 0;
@@ -199,18 +191,20 @@ class StreamExecutorInterface {
   virtual bool SynchronousMemZero(DeviceMemoryBase *location, uint64 size) = 0;
   virtual bool SynchronousMemSet(DeviceMemoryBase *location, int value,
                                  uint64 size) = 0;
-  virtual bool SynchronousMemcpy(DeviceMemoryBase *gpu_dst,
-                                 const void *host_src, uint64 size) = 0;
-  virtual bool SynchronousMemcpy(void *host_dst,
-                                 const DeviceMemoryBase &gpu_src,
-                                 uint64 size) = 0;
-  virtual bool SynchronousMemcpyDeviceToDevice(DeviceMemoryBase *gpu_dst,
-                                               const DeviceMemoryBase &gpu_src,
-                                               uint64 size) = 0;
+  virtual port::Status SynchronousMemcpy(DeviceMemoryBase *gpu_dst,
+                                         const void *host_src, uint64 size) = 0;
+  virtual port::Status SynchronousMemcpy(void *host_dst,
+                                         const DeviceMemoryBase &gpu_src,
+                                         uint64 size) = 0;
+  virtual port::Status SynchronousMemcpyDeviceToDevice(
+      DeviceMemoryBase *gpu_dst, const DeviceMemoryBase &gpu_src,
+      uint64 size) = 0;
   virtual bool MemZero(Stream *stream, DeviceMemoryBase *location,
                        uint64 size) = 0;
-  virtual bool Memset(Stream *stream, DeviceMemoryBase *location,
-                      uint8 pattern, uint64 size) = 0;
+  virtual bool Memset(Stream *stream, DeviceMemoryBase *location, uint8 pattern,
+                      uint64 size) {
+    return false;
+  }
   virtual bool Memset32(Stream *stream, DeviceMemoryBase *location,
                         uint32 pattern, uint64 size) = 0;
   virtual bool Memcpy(Stream *stream, void *host_dst,
@@ -233,13 +227,15 @@ class StreamExecutorInterface {
   virtual void DeallocateTimer(Timer *timer) = 0;
   virtual bool StartTimer(Stream *stream, Timer *timer) = 0;
   virtual bool StopTimer(Stream *stream, Timer *timer) = 0;
-  virtual bool BlockHostUntilDone(Stream *stream) = 0;
+  virtual port::Status BlockHostUntilDone(Stream *stream) = 0;
   virtual int PlatformDeviceCount() = 0;
   virtual port::Status EnablePeerAccessTo(StreamExecutorInterface *other) = 0;
   virtual bool CanEnablePeerAccessTo(StreamExecutorInterface *other) = 0;
   virtual SharedMemoryConfig GetDeviceSharedMemoryConfig() = 0;
   virtual port::Status SetDeviceSharedMemoryConfig(
       SharedMemoryConfig config) = 0;
+
+  virtual int64 GetDeviceLoad() { return -1; }
 
   virtual bool DeviceMemoryUsage(int64 *free, int64 *total) const {
     return false;
@@ -317,7 +313,7 @@ class StreamExecutorInterface {
   // Creates a new DnnSupport object, ownership is transferred to the caller.
   // If SupportsDnn() is false, this will always return null.
   //
-  // If SupportsDnn() is true, this may return null, for example, if the RNG
+  // If SupportsDnn() is true, this may return null, for example, if the DNN
   // initialization fails.
   virtual dnn::DnnSupport *CreateDnn() { return nullptr; }
 
@@ -355,7 +351,6 @@ extern StreamExecutorFactory MakeHostExecutorImplementation;
 
 
 }  // namespace internal
-}  // namespace gputools
-}  // namespace perftools
+}  // namespace stream_executor
 
 #endif  // TENSORFLOW_STREAM_EXECUTOR_STREAM_EXECUTOR_INTERNAL_H_
